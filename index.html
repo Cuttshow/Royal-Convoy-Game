@@ -3200,7 +3200,7 @@ function _serializeG(){
         id: pl.id, score: pl.score, royDone: pl.royDone, coins: pl.coins,
         bench: pl.bench.map(function(t){
           return {
-            id:t.id, t:t.t, l:t.l, f:t.f,
+            id:t.id, t:t.t, l:t.l,
             cell:t.cell, sUp:t.sUp, sBr:t.sBr, done:t.done,
             lives:t.lives, cd:t.cd,
             st:{moves:t.st.moves,kills:t.st.kills,coins:t.st.coins,
@@ -3247,8 +3247,9 @@ function _deserializeG(data){
     return {
       id: pl.id, score: pl.score, royDone: pl.royDone, coins: pl.coins,
       bench: pl.bench.map(function(t){
+        var unitDef = UNITS.find(function(u){return u.t===t.t;})||{};
         return {
-          id:t.id, t:t.t, l:t.l, f:t.f,
+          id:t.id, t:t.t, l:t.l, f:unitDef.f||function(){return '';},
           cell:t.cell, sUp:t.sUp, sBr:t.sBr, done:t.done,
           lives:t.lives, cd:t.cd, st:t.st
         };
