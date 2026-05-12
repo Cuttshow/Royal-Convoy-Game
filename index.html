@@ -3424,8 +3424,10 @@ function onlineJoinRoom(){
       _p2GameStarted = false;
       _fbListener = window._fbOnValue(roomRef, function(snapshot){
         var data = snapshot.val();
+        console.log('[P2 listener fired] status:', data && data.status, 'hasGameState:', !!(data && data.gameState), '_p2GameStarted:', _p2GameStarted, '_onlineMode:', _onlineMode);
         if(!data) return;
         if(data.status === 'in_game' && data.gameState && !_p2GameStarted){
+          console.log('[P2] Entering game, seq:', data.gameState._seq);
           _p2GameStarted = true;
           _onlineReceiveState(data.gameState);
         }
@@ -3513,19 +3515,24 @@ function _onlineHostSetup(){
 // ── Start game in online mode (host) ────────────────────────────
 
 function _onlineStartGame(ft){
+  console.log('[HOST] _onlineStartGame called, ft:', ft, 'roomCode:', _roomCode);
   _startGame(ft);
   // Re-attach listener now that game is running (was detached during setup)
   var roomRef = window._fbRef(window._fbDb, 'rooms/'+_roomCode);
   if(_fbListener){ try{ _fbListener(); }catch(e){} }
   _fbListener = window._fbOnValue(roomRef, function(snapshot){
     var data = snapshot.val();
+    console.log('[HOST listener] status:', data && data.status, 'hasGameState:', !!(data && data.gameState));
     if(!data) return;
     if(data.status === 'in_game' && data.gameState){
       _onlineReceiveState(data.gameState);
     }
   });
   // Push initial state to Firebase so P2 gets the board
-  setTimeout(function(){ _onlinePushState(); }, 300);
+  setTimeout(function(){
+    console.log('[HOST] About to push initial state, _onlineMode:', _onlineMode, '_roomCode:', _roomCode);
+    _onlinePushState();
+  }, 300);
   _showNetIndicator();
 }
 
@@ -3535,9 +3542,12 @@ function _onlinePushState(){
   if(!_onlineMode || !_roomCode) return;
   var serial = _serializeG();
   _lastSyncedState = serial;
+  console.log('[HOST] Pushing state, seq:', serial._seq, 'turn:', serial.turn, 'phase:', serial.phase);
   var roomRef = window._fbRef(window._fbDb, 'rooms/'+_roomCode);
-  window._fbUpdate(roomRef, {status:'in_game', gameState: serial}).catch(function(err){
-    console.warn('Firebase push error:', err);
+  window._fbUpdate(roomRef, {status:'in_game', gameState: serial}).then(function(){
+    console.log('[HOST] Push succeeded');
+  }).catch(function(err){
+    console.warn('[HOST] Firebase push error:', err);
   });
 }
 
@@ -3546,11 +3556,12 @@ function _onlinePushState(){
 var _processingRemote = false;
 var _p2GameStarted = false;
 function _onlineReceiveState(data){
+  console.log('[_onlineReceiveState] called, _onlineMode:', _onlineMode, 'seq:', data && data._seq, 'lastSeq:', _lastSyncedState && _lastSyncedState._seq);
   if(!data || !_onlineMode) return;
   // Ignore if this is our own push (same seq)
-  if(_lastSyncedState && data._seq === _lastSyncedState._seq) return;
+  if(_lastSyncedState && data._seq === _lastSyncedState._seq) { console.log('[_onlineReceiveState] ignored - same seq'); return; }
   // Ignore if this is an old sequence
-  if(_lastSyncedState && data._seq < _lastSyncedState._seq) return;
+  if(_lastSyncedState && data._seq < _lastSyncedState._seq) { console.log('[_onlineReceiveState] ignored - old seq'); return; }
 
   _lastSyncedState = data;
   _processingRemote = true;
