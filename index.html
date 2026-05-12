@@ -3421,10 +3421,12 @@ function onlineJoinRoom(){
       window._fbUpdate(roomRef, {status:'joined'});
 
       // Listen for game state pushes from host
+      _p2GameStarted = false;
       _fbListener = window._fbOnValue(roomRef, function(snapshot){
         var data = snapshot.val();
         if(!data) return;
-        if(data.status === 'in_game' && data.gameState){
+        if(data.status === 'in_game' && data.gameState && !_p2GameStarted){
+          _p2GameStarted = true;
           _onlineReceiveState(data.gameState);
         }
       });
@@ -3542,6 +3544,7 @@ function _onlinePushState(){
 // ── Receive state from Firebase (called on opponent's move) ──────
 
 var _processingRemote = false;
+var _p2GameStarted = false;
 function _onlineReceiveState(data){
   if(!data || !_onlineMode) return;
   // Ignore if this is our own push (same seq)
@@ -3552,16 +3555,19 @@ function _onlineReceiveState(data){
   _lastSyncedState = data;
   _processingRemote = true;
 
-  // If this is first state received by P2 (joiner), close lobby and build DOM
-  var firstTime = (G.phase === 'idle' || !G.pl || !G.pl[0]);
+  // First time P2 receives state — need to build the full DOM
+  var firstTime = (_myPid === 1 && (G.phase === 'idle' || G.pl[0].bench.length === 0));
   if(firstTime){
-    // Set up map, treeSqs, etc. before deserializing
+    // Restore king globals from data so P2 renders kingdom colours correctly
+    if(data.p1KingId) _p1K = KINGDOMS.find(function(k){return k.id===data.p1KingId;})||null;
+    if(data.p2KingId) _p2K = KINGDOMS.find(function(k){return k.id===data.p2KingId;})||null;
+
+    // Set up map before deserializing
     if(data.mapId){
       _selectedMapId = data.mapId;
       loadMap(_selectedMapId);
     }
-    // Generate matching treeSqs on P2's side (deterministic via same seed would be ideal;
-    // for now we generate locally — visually differs but gameplay is identical)
+    // Generate treeSqs locally for P2 (gameplay-identical, visually similar)
     var blankSqs2=[];
     for(var bi=0;bi<ROWS*COLS;bi++){if(CT[bi]==='blank')blankSqs2.push(bi);}
     var treeSqs2=new Map();
@@ -3574,7 +3580,7 @@ function _onlineReceiveState(data){
       ACCENTS2.forEach(function(a){if(slotIdx2<slots2.length&&Math.random()<a.p){items2.push({e:a.e,dx:slots2[slotIdx2].dx,dy:slots2[slotIdx2].dy,sz:(function(){var rr2=Math.random();return rr2<0.5?Math.floor(Math.random()*3)+9:rr2<0.8?Math.floor(Math.random()*3)+13:Math.floor(Math.random()*3)+17;}())});slotIdx2++;}});
       treeSqs2.set(idx2,items2);
     });
-    // Init bare G so deserialize can populate it
+    // Init bare G then deserialize from host state
     G={turn:0,phase:'idle',roll:0,d1:null,d2:null,treeSqs:treeSqs2,ift:true,csa:1,csm:false,chain:false,cpuTurnCount:0,p2human:true,hardMode:false,p1KingId:'',p2KingId:'',sel:null,rch:new Set(),busy:false,anim:false,snm:false,mercDeploy:false,hist:[],hN:0,pl:[{id:0,score:0,royDone:0,coins:0,bench:[]},{id:1,score:0,royDone:0,coins:0,bench:[]}]};
     G_BANDIT={cell:-1,roundsUntilSpawn:2,alive:false,destroyed:false,dormant:false,dormancyCounter:0};
     _deserializeG(data);
