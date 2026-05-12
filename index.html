@@ -359,7 +359,7 @@ button.act.pri{background:#5C3D0A;color:#F5EDD6;border-color:#3A2008}button.act.
 </div>
 <style>
 /* ── Online Lobby Modal ── */
-#online-modal{display:none;position:fixed;inset:0;background:rgba(60,32,8,.82);z-index:210;align-items:center;justify-content:center}
+#online-modal{display:none;position:fixed;inset:0;background:rgba(60,32,8,.82);z-index:180;align-items:center;justify-content:center}
 #online-modal.show{display:flex}
 #online-box{background:#F5EDD6;border:2px solid #A07820;border-radius:10px;padding:28px 32px;max-width:380px;width:94%;text-align:center;font-family:Georgia,serif}
 #online-box h2{font-size:16px;font-weight:700;color:#5C3D0A;letter-spacing:1.5px;margin-bottom:6px}
@@ -3364,16 +3364,19 @@ function onlineCreate(){
       document.getElementById('ob-copy-hint').style.display='';
       document.getElementById('ob-status').textContent='⏳ Waiting for opponent to join…';
 
-      // Listen for P2 joining
+      // Listen for P2 joining — use a flag so we only trigger once
+      var _hostSetupTriggered = false;
       _fbListener = window._fbOnValue(roomRef, function(snapshot){
         var data = snapshot.val();
         if(!data){ _onlineCleanup(); return; }
-        if(data.status === 'joined' && _waitingForOpponent){
+        // P2 joined — kick off setup exactly once
+        if((data.status === 'joined') && _waitingForOpponent && !_hostSetupTriggered){
+          _hostSetupTriggered = true;
           _waitingForOpponent = false;
-          // P2 joined! Start game setup as host
           _onlineHostSetup();
         }
-        if(data.status === 'in_game' && data.gameState && !_waitingForOpponent){
+        // Incoming game state (opponent's moves after game starts) — only if we didn't push it
+        if(data.status === 'in_game' && data.gameState){
           _onlineReceiveState(data.gameState);
         }
       });
@@ -3435,61 +3438,92 @@ function onlineJoinRoom(){
 // ── Host begins game setup after P2 joins ───────────────────────
 
 function _onlineHostSetup(){
-  // Close lobby, start the normal king/map selection flow as P1
-  // G.p2human must be true for online
+  // Stop listening during setup — we'll re-attach after game starts
+  if(_fbListener){ try{ _fbListener(); }catch(e){} _fbListener=null; }
+
+  // Close ALL modals cleanly before opening king selection
+  document.getElementById('online-modal').classList.remove('show');
+  document.getElementById('ob-status').textContent='Opponent joined! Setting up game…';
+
   _pendingP2h = true;
   _pendingHard = false;
   _p1K = null; _p2K = null;
 
-  document.getElementById('ob-status').textContent='Opponent joined! Setting up game…';
-
-  showKingP1(function(k1){
-    _p1K = k1;
-    showKingP2(function(k2){
-      _p2K = k2;
-      showMapSelect(function(){
-        document.getElementById('online-modal').classList.remove('show');
-        G.p2human = true;
-        G.hardMode = false;
-        G.p1KingId = _p1K ? _p1K.id : '';
-        G.p2KingId = _p2K ? _p2K.id : '';
-        _pendingFt = Math.random()<0.5?0:1;
-        var heads = _pendingFt===0;
-        var wKing = _pendingFt===0?_p1K:_p2K;
-        var winner = wKing?wKing.name:(_pendingFt===0?'P1':'P2');
-        var modal=document.getElementById('coin-modal');
-        var emoji=document.getElementById('coin-emoji');
-        var result=document.getElementById('coin-result');
-        var goBtn=document.getElementById('coin-go');
-        result.textContent=''; goBtn.style.display='none';
-        emoji.textContent='🪙'; emoji.classList.remove('flip');
-        modal.classList.add('show');
-        setTimeout(function(){ emoji.textContent='🪙'; emoji.classList.add('flip'); },50);
-        setTimeout(function(){
-          emoji.classList.remove('flip');
-          var wk=heads?_p1K:_p2K;
-          var wbg=wk?wk.bg:'#A8C4E0', wst=wk?wk.stroke:'#4A7AAA';
-          emoji.innerHTML='<div style="width:64px;height:64px;border-radius:50%;background:'+wbg+';border:3px solid '+wst+';display:flex;align-items:center;justify-content:center;font-size:32px">👑</div>';
-          result.textContent=(heads?'Heads! ':'Tails! ')+winner+' goes first!';
-          goBtn.style.display='inline-block';
-        },1500);
-        // Override coinDismiss for online to also push initial state
-        document.getElementById('coin-go').onclick = function(){
-          document.getElementById('coin-modal').classList.remove('show');
-          hideSplashBg();
-          _onlineStartGame(_pendingFt);
+  // Small delay to let modal close before opening king picker
+  setTimeout(function(){
+    showKingP1(function(k1){
+      _p1K = k1;
+      // In online mode, host picks both kingdoms (P2 plays with what host assigns)
+      // Show P2 kingdom picker labeled for online
+      document.getElementById('king-title').textContent='⚜ CHOOSE OPPONENT\'S KINGDOM ⚜';
+      document.getElementById('king-sub').textContent='Pick the kingdom your opponent will play';
+      document.getElementById('king-cpu-msg').textContent='';
+      var c=document.getElementById('king-btns');
+      c.innerHTML='';
+      KINGDOMS.forEach(function(k){
+        var dis=k.id===_p1K.id;
+        var b=document.createElement('button');
+        b.className='king-btn'+(dis?' kdisabled':'');
+        b.innerHTML='<div class="king-swatch" style="background:'+k.bg+';border-color:'+k.stroke+'">👑</div><div><div class="king-name">'+k.name+'</div><div class="king-bonus">'+k.bonus+'</div></div>';
+        if(!dis) b.onclick=function(){
+          document.getElementById('king-modal').classList.remove('show');
+          _p2K=k;
+          showMapSelect(function(){
+            G.p2human = true;
+            G.hardMode = false;
+            G.p1KingId = _p1K ? _p1K.id : '';
+            G.p2KingId = _p2K ? _p2K.id : '';
+            _pendingFt = Math.random()<0.5?0:1;
+            var heads = _pendingFt===0;
+            var wKing = _pendingFt===0?_p1K:_p2K;
+            var winner = wKing?wKing.name:(_pendingFt===0?'P1':'P2');
+            var modal=document.getElementById('coin-modal');
+            var emoji=document.getElementById('coin-emoji');
+            var result=document.getElementById('coin-result');
+            var goBtn=document.getElementById('coin-go');
+            result.textContent=''; goBtn.style.display='none';
+            emoji.textContent='🪙'; emoji.classList.remove('flip');
+            modal.classList.add('show');
+            setTimeout(function(){ emoji.textContent='🪙'; emoji.classList.add('flip'); },50);
+            setTimeout(function(){
+              emoji.classList.remove('flip');
+              var wk=heads?_p1K:_p2K;
+              var wbg=wk?wk.bg:'#A8C4E0', wst=wk?wk.stroke:'#4A7AAA';
+              emoji.innerHTML='<div style="width:64px;height:64px;border-radius:50%;background:'+wbg+';border:3px solid '+wst+';display:flex;align-items:center;justify-content:center;font-size:32px">👑</div>';
+              result.textContent=(heads?'Heads! ':'Tails! ')+winner+' goes first!';
+              goBtn.style.display='inline-block';
+            },1500);
+            // Override coinDismiss for online to push initial state
+            document.getElementById('coin-go').onclick = function(){
+              document.getElementById('coin-modal').classList.remove('show');
+              hideSplashBg();
+              _onlineStartGame(_pendingFt);
+            };
+          });
         };
+        c.appendChild(b);
       });
+      document.getElementById('king-modal').classList.add('show');
     });
-  });
+  }, 150);
 }
 
 // ── Start game in online mode (host) ────────────────────────────
 
 function _onlineStartGame(ft){
   _startGame(ft);
-  // After _startGame builds state, push to Firebase
-  setTimeout(function(){ _onlinePushState(); }, 200);
+  // Re-attach listener now that game is running (was detached during setup)
+  var roomRef = window._fbRef(window._fbDb, 'rooms/'+_roomCode);
+  if(_fbListener){ try{ _fbListener(); }catch(e){} }
+  _fbListener = window._fbOnValue(roomRef, function(snapshot){
+    var data = snapshot.val();
+    if(!data) return;
+    if(data.status === 'in_game' && data.gameState){
+      _onlineReceiveState(data.gameState);
+    }
+  });
+  // Push initial state to Firebase so P2 gets the board
+  setTimeout(function(){ _onlinePushState(); }, 300);
   _showNetIndicator();
 }
 
