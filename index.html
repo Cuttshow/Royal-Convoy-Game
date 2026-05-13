@@ -3186,37 +3186,43 @@ var _waitingForOpponent = false;
 // ── Serialise / Deserialise game state ──────────────────────────
 
 function _serializeG(){
-  // G contains Sets (rch, treeSqs Map) that can't go directly into JSON.
-  // We strip ephemeral UI fields and convert Sets where needed.
+  // Helper: replace undefined with null for Firebase compatibility
+  function nn(v){ return v === undefined ? null : v; }
   var serial = {
-    turn: G.turn, phase: G.phase, roll: G.roll, d1: G.d1, d2: G.d2,
+    turn: G.turn, phase: G.phase, roll: G.roll, d1: nn(G.d1), d2: nn(G.d2),
     ift: G.ift, csa: G.csa, csm: G.csm, chain: G.chain,
     cpuTurnCount: G.cpuTurnCount, p2human: G.p2human, hardMode: G.hardMode,
     p1KingId: G.p1KingId, p2KingId: G.p2KingId,
-    sel: G.sel, busy: false, anim: false, snm: G.snm, mercDeploy: G.mercDeploy||false,
+    sel: nn(G.sel), busy: false, anim: false, snm: G.snm, mercDeploy: G.mercDeploy||false,
     hist: G.hist, hN: G.hN,
     pl: G.pl.map(function(pl){
       return {
         id: pl.id, score: pl.score, royDone: pl.royDone, coins: pl.coins,
         bench: pl.bench.map(function(t){
           return {
-            id:t.id, t:t.t, l:t.l,
-            cell:t.cell, sUp:t.sUp, sBr:t.sBr, done:t.done,
-            lives:t.lives, cd:t.cd,
-            st:{moves:t.st.moves,kills:t.st.kills,coins:t.st.coins,
-                castles:t.st.castles,finishes:t.st.finishes,deaths:t.st.deaths}
+            id: t.id, t: t.t, l: t.l,
+            cell: nn(t.cell), sUp: nn(t.sUp), sBr: nn(t.sBr), done: t.done||false,
+            lives: nn(t.lives), cd: nn(t.cd)||0,
+            st:{
+              moves:  nn(t.st&&t.st.moves)||0,
+              kills:  nn(t.st&&t.st.kills)||0,
+              coins:  nn(t.st&&t.st.coins)||0,
+              castles:nn(t.st&&t.st.castles)||0,
+              finishes:nn(t.st&&t.st.finishes)||0,
+              deaths: nn(t.st&&t.st.deaths)||0
+            }
           };
         })
       };
     }),
     bandit: {
-      cell: G_BANDIT.cell, roundsUntilSpawn: G_BANDIT.roundsUntilSpawn,
-      alive: G_BANDIT.alive, destroyed: G_BANDIT.destroyed,
-      dormant: G_BANDIT.dormant, dormancyCounter: G_BANDIT.dormancyCounter
+      cell: nn(G_BANDIT.cell), roundsUntilSpawn: nn(G_BANDIT.roundsUntilSpawn),
+      alive: G_BANDIT.alive||false, destroyed: G_BANDIT.destroyed||false,
+      dormant: G_BANDIT.dormant||false, dormancyCounter: G_BANDIT.dormancyCounter||0
     },
     mapId: _selectedMapId||'tkr',
-    royalPlayOrder: _royalPlayOrder,
-    royalPlayIdx: _royalPlayIdx,
+    royalPlayOrder: _royalPlayOrder||null,
+    royalPlayIdx: nn(_royalPlayIdx),
     _seq: (_lastSyncedState && _lastSyncedState._seq ? _lastSyncedState._seq : 0) + 1
   };
   return serial;
