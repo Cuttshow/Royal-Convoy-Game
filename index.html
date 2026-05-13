@@ -3423,13 +3423,20 @@ function onlineJoinRoom(){
 
       // Listen for game state pushes from host
       _p2GameStarted = false;
+      var _p2LastSeenSeq = 0;
       _fbListener = window._fbOnValue(roomRef, function(snapshot){
         var data = snapshot.val();
-        console.log('[P2 listener fired] status:', data && data.status, 'hasGameState:', !!(data && data.gameState), '_p2GameStarted:', _p2GameStarted, '_onlineMode:', _onlineMode);
-        if(!data) return;
-        if(data.status === 'in_game' && data.gameState && !_p2GameStarted){
-          console.log('[P2] Entering game, seq:', data.gameState._seq);
-          _p2GameStarted = true;
+        console.log('[P2 listener fired] status:', data && data.status, 'seq:', data && data.gameState && data.gameState._seq, '_p2GameStarted:', _p2GameStarted, '_onlineMode:', _onlineMode);
+        if(!data || !data.gameState) return;
+        var seq = data.gameState._seq;
+        if(seq <= _p2LastSeenSeq) return;
+        // Skip our own push echoes
+        if(_lastSyncedState && seq === _lastSyncedState._seq) { _p2LastSeenSeq = seq; return; }
+        _p2LastSeenSeq = seq;
+        if(data.status === 'in_game'){
+          if(!_p2GameStarted){
+            _p2GameStarted = true;
+          }
           _onlineReceiveState(data.gameState);
         }
       });
@@ -3518,14 +3525,21 @@ function _onlineHostSetup(){
 function _onlineStartGame(ft){
   console.log('[HOST] _onlineStartGame called, ft:', ft, 'roomCode:', _roomCode);
   _startGame(ft);
-  // Re-attach listener now that game is running (was detached during setup)
+  // Re-attach listener for opponent's future moves only
   var roomRef = window._fbRef(window._fbDb, 'rooms/'+_roomCode);
   if(_fbListener){ try{ _fbListener(); }catch(e){} }
+  var _lastSeenSeq = 0;
   _fbListener = window._fbOnValue(roomRef, function(snapshot){
     var data = snapshot.val();
-    console.log('[HOST listener] status:', data && data.status, 'hasGameState:', !!(data && data.gameState));
-    if(!data) return;
-    if(data.status === 'in_game' && data.gameState){
+    console.log('[HOST listener] status:', data && data.status, 'seq:', data && data.gameState && data.gameState._seq, 'lastSeenSeq:', _lastSeenSeq);
+    if(!data || !data.gameState) return;
+    // Only process state pushed BY P2 (seq we haven't seen AND didn't push ourselves)
+    var seq = data.gameState._seq;
+    if(seq <= _lastSeenSeq) return;
+    // If this seq matches what we just pushed, it's our own echo — skip it
+    if(_lastSyncedState && seq === _lastSyncedState._seq) { _lastSeenSeq = seq; return; }
+    _lastSeenSeq = seq;
+    if(data.status === 'in_game'){
       _onlineReceiveState(data.gameState);
     }
   });
@@ -3542,13 +3556,15 @@ function _onlineStartGame(ft){
 function _onlinePushState(){
   if(!_onlineMode || !_roomCode) return;
   var serial = _serializeG();
+  // Seq: always increment from last known seq regardless of who set it
+  serial._seq = (_lastSyncedState ? _lastSyncedState._seq : 0) + 1;
   _lastSyncedState = serial;
-  console.log('[HOST] Pushing state, seq:', serial._seq, 'turn:', serial.turn, 'phase:', serial.phase);
+  console.log('[PUSH] seq:', serial._seq, 'turn:', serial.turn, 'phase:', serial.phase, 'myPid:', _myPid);
   var roomRef = window._fbRef(window._fbDb, 'rooms/'+_roomCode);
   window._fbUpdate(roomRef, {status:'in_game', gameState: serial}).then(function(){
-    console.log('[HOST] Push succeeded');
+    console.log('[PUSH] succeeded seq:', serial._seq);
   }).catch(function(err){
-    console.warn('[HOST] Firebase push error:', err);
+    console.warn('[PUSH] Firebase error:', err);
   });
 }
 
@@ -3556,14 +3572,14 @@ function _onlinePushState(){
 
 var _processingRemote = false;
 var _p2GameStarted = false;
+var _lastAppliedSeq = 0;
 function _onlineReceiveState(data){
-  console.log('[_onlineReceiveState] called, _onlineMode:', _onlineMode, 'seq:', data && data._seq, 'lastSeq:', _lastSyncedState && _lastSyncedState._seq);
+  console.log('[RECEIVE] seq:', data && data._seq, 'lastApplied:', _lastAppliedSeq, 'myPid:', _myPid, '_onlineMode:', _onlineMode);
   if(!data || !_onlineMode) return;
-  // Ignore if this is our own push (same seq)
-  if(_lastSyncedState && data._seq === _lastSyncedState._seq) { console.log('[_onlineReceiveState] ignored - same seq'); return; }
-  // Ignore if this is an old sequence
-  if(_lastSyncedState && data._seq < _lastSyncedState._seq) { console.log('[_onlineReceiveState] ignored - old seq'); return; }
-
+  // Skip if we already applied this seq
+  if(data._seq <= _lastAppliedSeq) { console.log('[RECEIVE] skipped - old or same seq'); return; }
+  _lastAppliedSeq = data._seq;
+  // Also update _lastSyncedState so our next push increments correctly
   _lastSyncedState = data;
   _processingRemote = true;
 
@@ -3628,8 +3644,9 @@ function _patchOnlineFunctions(){
   if(typeof endTurn === 'function' && !_origEndTurn){
     _origEndTurn = endTurn;
     endTurn = function(){
+      var wasMyTurn = _isMyTurn();
       _origEndTurn.apply(this, arguments);
-      if(_onlineMode && !_processingRemote){
+      if(_onlineMode && !_processingRemote && wasMyTurn){
         setTimeout(_onlinePushState, 50);
       }
     };
@@ -3638,8 +3655,9 @@ function _patchOnlineFunctions(){
   if(typeof applyMove === 'function' && !_origApplyMove){
     _origApplyMove = applyMove;
     applyMove = function(){
+      var wasMyTurn = _isMyTurn();
       _origApplyMove.apply(this, arguments);
-      if(_onlineMode && !_processingRemote){
+      if(_onlineMode && !_processingRemote && wasMyTurn){
         setTimeout(_onlinePushState, 80);
       }
     };
@@ -3648,8 +3666,9 @@ function _patchOnlineFunctions(){
   if(typeof confirmCS === 'function' && !_origConfirmCS){
     _origConfirmCS = confirmCS;
     confirmCS = function(){
+      var wasMyTurn = _isMyTurn();
       _origConfirmCS.apply(this, arguments);
-      if(_onlineMode && !_processingRemote){
+      if(_onlineMode && !_processingRemote && wasMyTurn){
         setTimeout(_onlinePushState, 80);
       }
     };
