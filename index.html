@@ -3645,8 +3645,10 @@ function _patchOnlineFunctions(){
     _origEndTurn = endTurn;
     endTurn = function(){
       var wasMyTurn = _isMyTurn();
+      console.log('[PATCH endTurn] wasMyTurn:', wasMyTurn, '_processingRemote:', _processingRemote, '_onlineMode:', _onlineMode, 'G.turn:', G.turn, '_myPid:', _myPid);
       _origEndTurn.apply(this, arguments);
       if(_onlineMode && !_processingRemote && wasMyTurn){
+        console.log('[PATCH endTurn] → pushing state');
         setTimeout(_onlinePushState, 50);
       }
     };
@@ -3656,8 +3658,10 @@ function _patchOnlineFunctions(){
     _origApplyMove = applyMove;
     applyMove = function(){
       var wasMyTurn = _isMyTurn();
+      console.log('[PATCH applyMove] wasMyTurn:', wasMyTurn, '_processingRemote:', _processingRemote, '_onlineMode:', _onlineMode, 'G.turn:', G.turn, '_myPid:', _myPid);
       _origApplyMove.apply(this, arguments);
       if(_onlineMode && !_processingRemote && wasMyTurn){
+        console.log('[PATCH applyMove] → pushing state');
         setTimeout(_onlinePushState, 80);
       }
     };
